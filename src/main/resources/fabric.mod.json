@@ -1,0 +1,41 @@
+{
+	"schemaVersion": 1,
+	"id": "create-auto-armour",
+	"version": "${version}",
+	"name": "Create Auto Armour",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/create-auto-armour/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"revilo.createautoarm.CreateAutoArmour"
+		],
+		"client": [
+			"revilo.createautoarm.CreateAutoArmourClient"
+		],
+		"fabric-datagen": [
+			"revilo.createautoarm.CreateAutoArmourDataGenerator"
+		]
+	},
+	"mixins": [
+		"create-auto-armour.mixins.json",
+		{
+			"config": "create-auto-armour.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.18.4",
+		"minecraft": "~1.20.1",
+		"java": ">=17",
+		"fabric-api": "*"
+	}
+}
