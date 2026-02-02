@@ -33,6 +33,7 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
 
     public AutoSmithingTableBlockEntity(BlockPos pos, BlockState state) {
         super(CreateAutoArmour.SMITHING_TABLE_BE, pos, state);
+
         for (int i = 0; i < 3; i++) {
             inventory[i] = new SingleVariantStorage<>() {
                 @Override
@@ -52,7 +53,6 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
                 }
             };
         }
-        // Expose all 3 slots as one big inventory for belts to insert into
         this.exposedStorage = new CombinedStorage<>(List.of(inventory[0], inventory[1], inventory[2]));
     }
 
@@ -62,58 +62,34 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
 
     @Override
     public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
-        // No behaviours needed, we handle logic manually
+        // No behaviours needed
     }
 
     @Override
     public void tick() {
         super.tick();
-        if (level == null || level.isClientSide) return;
-
-        // Custom logic to detect if a Press is coming down on us
-        // Note: The Press requires a Redstone Signal to activate since we don't have a Create Recipe
-        BlockEntity beAbove = level.getBlockEntity(worldPosition.above(2));
-        if (beAbove instanceof MechanicalPressBlockEntity press) {
-            checkPressing(press);
-        } else {
-            // Sometimes the press is physically in the block directly above (when extended)
-            beAbove = level.getBlockEntity(worldPosition.above());
-            if (beAbove instanceof MechanicalPressBlockEntity press) {
-                checkPressing(press);
-            }
-        }
-    }
-
-    private void checkPressing(MechanicalPressBlockEntity press) {
-        PressingBehaviour pressingBehaviour = press.getPressingBehaviour();
-        if (pressingBehaviour == null) return;
-
-        // 0 = Retracted, 1 = Fully Extended (Hitting us)
-        float progress = pressingBehaviour.getRenderedHeadOffset(0);
-
-        // If the press is extended enough to hit the table
-        if (progress > 0.5f && !inventory[0].isResourceBlank() && !inventory[1].isResourceBlank() && !inventory[2].isResourceBlank()) {
-            attemptCraft();
-        }
+        // We moved the pressing logic to the Mixin for reliability,
+        // but keeping this empty override ensures standard SmartBlockEntity behavior
     }
 
     public InteractionResult onUse(Player player, InteractionHand hand) {
         if (level == null || level.isClientSide) return InteractionResult.PASS;
         ItemStack held = player.getItemInHand(hand);
 
-        // 1. Try to insert item
+        // 1. Try to INSERT
         if (!held.isEmpty()) {
-            for (SingleVariantStorage<ItemVariant> slot : inventory) {
-                if (slot.isResourceBlank()) {
-                    slot.variant = ItemVariant.of(held);
-                    slot.amount = 1;
+            // Simple Insert: Put it in the first available slot
+            for (int i = 0; i < 3; i++) {
+                if (inventory[i].isResourceBlank()) {
+                    inventory[i].variant = ItemVariant.of(held);
+                    inventory[i].amount = 1;
                     if (!player.isCreative()) held.shrink(1);
                     notifyUpdate();
-                    return InteractionResult.SUCCESS; // We handled it, don't open GUI
+                    return InteractionResult.SUCCESS;
                 }
             }
         }
-        // 2. Try to take item (LIFO)
+        // 2. Try to TAKE item (LIFO)
         else {
             for (int i = 2; i >= 0; i--) {
                 if (!inventory[i].isResourceBlank()) {
@@ -121,12 +97,11 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
                     inventory[i].variant = ItemVariant.blank();
                     inventory[i].amount = 0;
                     notifyUpdate();
-                    return InteractionResult.SUCCESS; // We handled it
+                    return InteractionResult.SUCCESS;
                 }
             }
         }
 
-        // 3. If we couldn't insert or take anything, return PASS so vanilla GUI opens
         return InteractionResult.PASS;
     }
 
@@ -135,7 +110,7 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
 
         SimpleContainer tempInv = new SimpleContainer(3);
         for (int i = 0; i < 3; i++) {
-            if (inventory[i].isResourceBlank()) return; // Not full
+            if (inventory[i].isResourceBlank()) return;
             tempInv.setItem(i, inventory[i].variant.toStack((int) inventory[i].amount));
         }
 
@@ -144,6 +119,7 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
         if (match.isPresent()) {
             ItemStack result = match.get().assemble(tempInv, level.registryAccess());
 
+            // Consume inputs
             for (SingleVariantStorage<ItemVariant> slot : inventory) {
                 slot.amount = 0;
                 slot.variant = ItemVariant.blank();
@@ -154,8 +130,17 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
             inventory[0].amount = 1;
 
             notifyUpdate();
-            level.levelEvent(1044, worldPosition, 0); // Sound
+            level.levelEvent(1044, worldPosition, 0);
         }
+    }
+
+    // THIS is the method you were missing that caused the compile error
+    public int getFilledSlots() {
+        int count = 0;
+        for(SingleVariantStorage<ItemVariant> slot : inventory) {
+            if(!slot.isResourceBlank()) count++;
+        }
+        return count;
     }
 
     @Override

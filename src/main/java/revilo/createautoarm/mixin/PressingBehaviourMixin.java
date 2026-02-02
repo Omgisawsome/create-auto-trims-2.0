@@ -22,32 +22,44 @@ public abstract class PressingBehaviourMixin extends BlockEntityBehaviour {
         super(null);
     }
 
+    // TRIGGER LOGIC: Starts the press if table is full
     @Inject(method = "tick", at = @At("HEAD"))
     private void autoSmithingTrigger(CallbackInfo ci) {
         if (getWorld() == null || getWorld().isClientSide) return;
 
-        // If already running, do nothing
-        if (running) return;
-
-        // Ensure we are attached to a Mechanical Press
-        if (blockEntity instanceof MechanicalPressBlockEntity press) {
-
-            // Must have rotational speed to work
+        if (!running && blockEntity instanceof MechanicalPressBlockEntity press) {
             if (Math.abs(press.getSpeed()) == 0) return;
 
-            // Check 2 blocks below (Standard Press gap)
-            // [Press] (Y)
-            // [Air]   (Y-1)
-            // [Table] (Y-2)
             BlockPos targetPos = getPos().below(2);
             BlockEntity targetBE = getWorld().getBlockEntity(targetPos);
 
             if (targetBE instanceof AutoSmithingTableBlockEntity table) {
-                // If the table is full (3 items), force start the press
                 if (table.getFilledSlots() == 3) {
                     running = true;
-                    mode = PressingBehaviour.Mode.BELT; // Uses BELT mode logic which is suitable for "in-place" processing
+                    mode = PressingBehaviour.Mode.BELT;
                     blockEntity.sendData();
+                }
+            }
+        }
+    }
+
+    // CRAFTING LOGIC: Forces the table to craft when press hits
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void autoSmithingCraft(CallbackInfo ci) {
+        if (getWorld() == null || getWorld().isClientSide) return;
+
+        if (running && blockEntity instanceof MechanicalPressBlockEntity press) {
+            // We cast 'this' to PressingBehaviour to access the method
+            float progress = ((PressingBehaviour)(Object)this).getRenderedHeadOffset(0);
+
+            // If fully extended (hitting the table)
+            if (progress > 0.95f) {
+                BlockPos targetPos = getPos().below(2);
+                BlockEntity targetBE = getWorld().getBlockEntity(targetPos);
+
+                if (targetBE instanceof AutoSmithingTableBlockEntity table) {
+                    // Try to craft. Safe to call multiple times as ingredients get consumed.
+                    table.attemptCraft();
                 }
             }
         }
