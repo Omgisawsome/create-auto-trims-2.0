@@ -16,13 +16,12 @@ import revilo.createautoarm.block.AutoSmithingTableBlockEntity;
 public abstract class PressingBehaviourMixin extends BlockEntityBehaviour {
 
     @Shadow public boolean running;
-    @Shadow public PressingBehaviour.Mode mode;
 
     public PressingBehaviourMixin() {
         super(null);
     }
 
-    // TRIGGER LOGIC: Starts the press if table is full
+    // 1. TRIGGER: Force start the press if table is full
     @Inject(method = "tick", at = @At("HEAD"))
     private void autoSmithingTrigger(CallbackInfo ci) {
         if (getWorld() == null || getWorld().isClientSide) return;
@@ -36,29 +35,27 @@ public abstract class PressingBehaviourMixin extends BlockEntityBehaviour {
             if (targetBE instanceof AutoSmithingTableBlockEntity table) {
                 if (table.getFilledSlots() == 3) {
                     running = true;
-                    mode = PressingBehaviour.Mode.BELT;
+                    // Note: We do NOT force Mode.BELT anymore to avoid state locking
                     blockEntity.sendData();
                 }
             }
         }
     }
 
-    // CRAFTING LOGIC: Forces the table to craft when press hits
+    // 2. CRAFT: Force the table to craft when the press actually hits it
     @Inject(method = "tick", at = @At("TAIL"))
     private void autoSmithingCraft(CallbackInfo ci) {
         if (getWorld() == null || getWorld().isClientSide) return;
 
         if (running && blockEntity instanceof MechanicalPressBlockEntity press) {
-            // We cast 'this' to PressingBehaviour to access the method
             float progress = ((PressingBehaviour)(Object)this).getRenderedHeadOffset(0);
 
-            // If fully extended (hitting the table)
+            // When press head is fully extended (approx > 0.95)
             if (progress > 0.95f) {
                 BlockPos targetPos = getPos().below(2);
                 BlockEntity targetBE = getWorld().getBlockEntity(targetPos);
 
                 if (targetBE instanceof AutoSmithingTableBlockEntity table) {
-                    // Try to craft. Safe to call multiple times as ingredients get consumed.
                     table.attemptCraft();
                 }
             }
