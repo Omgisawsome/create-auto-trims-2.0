@@ -16,16 +16,18 @@ import revilo.createautoarm.block.AutoSmithingTableBlockEntity;
 public abstract class PressingBehaviourMixin extends BlockEntityBehaviour {
 
     @Shadow public boolean running;
+    @Shadow public int runningTicks;
+    @Shadow public PressingBehaviour.Mode mode;
 
     public PressingBehaviourMixin() {
         super(null);
     }
 
-    // 1. TRIGGER: Force start the press if table is full
     @Inject(method = "tick", at = @At("HEAD"))
     private void autoSmithingTrigger(CallbackInfo ci) {
         if (getWorld() == null || getWorld().isClientSide) return;
 
+        // Only start if not currently running
         if (!running && blockEntity instanceof MechanicalPressBlockEntity press) {
             if (Math.abs(press.getSpeed()) == 0) return;
 
@@ -33,16 +35,20 @@ public abstract class PressingBehaviourMixin extends BlockEntityBehaviour {
             BlockEntity targetBE = getWorld().getBlockEntity(targetPos);
 
             if (targetBE instanceof AutoSmithingTableBlockEntity table) {
-                if (table.getFilledSlots() == 3) {
+                // Ensure inputs are full AND output is empty (so we don't press for no reason)
+                if (table.getFilledSlots() == 3 && table.isOutputEmpty()) {
+
+                    // Force Start & Reset State
                     running = true;
-                    // Note: We do NOT force Mode.BELT anymore to avoid state locking
+                    runningTicks = 0;
+                    mode = PressingBehaviour.Mode.WORLD; // Force WORLD mode for consistency
+
                     blockEntity.sendData();
                 }
             }
         }
     }
 
-    // 2. CRAFT: Force the table to craft when the press actually hits it
     @Inject(method = "tick", at = @At("TAIL"))
     private void autoSmithingCraft(CallbackInfo ci) {
         if (getWorld() == null || getWorld().isClientSide) return;
@@ -50,7 +56,7 @@ public abstract class PressingBehaviourMixin extends BlockEntityBehaviour {
         if (running && blockEntity instanceof MechanicalPressBlockEntity press) {
             float progress = ((PressingBehaviour)(Object)this).getRenderedHeadOffset(0);
 
-            // When press head is fully extended (approx > 0.95)
+            // Trigger at bottom of animation
             if (progress > 0.95f) {
                 BlockPos targetPos = getPos().below(2);
                 BlockEntity targetBE = getWorld().getBlockEntity(targetPos);

@@ -28,14 +28,25 @@ public class SmithingTableMixin implements EntityBlock {
     private void onUse(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit, CallbackInfoReturnable<InteractionResult> cir) {
         BlockEntity be = level.getBlockEntity(pos);
         if (be instanceof AutoSmithingTableBlockEntity smithingBe) {
-            // Attempt custom interaction
-            InteractionResult result = smithingBe.onUse(player, hand);
+            // Pass the clicked face (hit.getDirection()) so we know where to eject items later
+            InteractionResult result = smithingBe.onUse(player, hand, hit.getDirection());
 
-            // If SUCCESS, we handled it -> cancel vanilla.
-            // If PASS, we didn't do anything -> let vanilla open the GUI.
             if (result == InteractionResult.SUCCESS) {
                 cir.setReturnValue(InteractionResult.SUCCESS);
             }
         }
+    }
+
+    // Logic for Comparator output
+    public boolean hasAnalogOutputSignal(BlockState state) {
+        return true;
+    }
+
+    public int getAnalogOutputSignal(BlockState state, Level level, BlockPos pos) {
+        BlockEntity be = level.getBlockEntity(pos);
+        if (be instanceof AutoSmithingTableBlockEntity smithingBe) {
+            return smithingBe.getFilledSlots();
+        }
+        return 0;
     }
 }

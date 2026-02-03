@@ -33,10 +33,7 @@ import java.util.Optional;
 @SuppressWarnings({"rawtypes", "unchecked", "UnstableApiUsage"})
 public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements SidedStorageBlockEntity {
 
-    // Slot 0: Template
-    // Slot 1: Base (Tool/Armor)
-    // Slot 2: Addition (Ingot/Gem)
-    // Slot 3: OUTPUT (Finished Item)
+    // Slot 0: Template, Slot 1: Base, Slot 2: Addition, Slot 3: OUTPUT
     public final SingleVariantStorage<ItemVariant>[] inventory = new SingleVariantStorage[4];
     private final Storage<ItemVariant> exposedStorage;
 
@@ -47,78 +44,41 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements Si
             int finalI = i;
             inventory[i] = new SingleVariantStorage<>() {
                 @Override
-                protected ItemVariant getBlankVariant() {
-                    return ItemVariant.blank();
-                }
-
+                protected ItemVariant getBlankVariant() { return ItemVariant.blank(); }
                 @Override
-                protected long getCapacity(ItemVariant variant) {
-                    return 1;
-                }
-
+                protected long getCapacity(ItemVariant variant) { return 1; }
                 @Override
                 protected boolean canInsert(ItemVariant variant) {
-                    // Only allow insertion into Input Slots (0, 1, 2)
                     if (finalI == 3) return false;
                     return isValidForSlot(finalI, variant.toStack());
                 }
-
                 @Override
-                protected boolean canExtract(ItemVariant variant) {
-                    // Only allow extraction from Output Slot (3)
-                    return finalI == 3;
-                }
-
+                protected boolean canExtract(ItemVariant variant) { return finalI == 3; }
                 @Override
-                protected void onFinalCommit() {
-                    setChanged();
-                    sendData();
-                }
+                protected void onFinalCommit() { setChanged(); sendData(); }
             };
         }
         this.exposedStorage = new CombinedStorage<>(List.of(inventory[0], inventory[1], inventory[2], inventory[3]));
     }
 
     @Override
-    public @Nullable Storage<ItemVariant> getItemStorage(Direction side) {
-        return exposedStorage;
-    }
+    public @Nullable Storage<ItemVariant> getItemStorage(Direction side) { return exposedStorage; }
+    public Storage<ItemVariant> getStorage() { return exposedStorage; }
 
-    public Storage<ItemVariant> getStorage() {
-        return exposedStorage;
-    }
-
-    /**
-     * ROBUST FILTER:
-     * Slot 0: Templates
-     * Slot 1: Armor/Tools
-     * Slot 2: Everything Else (Ensures Modded Ores/Ingots work)
-     * Slot 3: Output Only (No insert)
-     */
     private boolean isValidForSlot(int slot, ItemStack stack) {
-        if (slot == 3) return false; // Output only
-
+        if (slot == 3) return false;
         boolean isTemplate = stack.getItem() instanceof SmithingTemplateItem;
-        boolean isBase = stack.getItem() instanceof ArmorItem
-                || stack.getItem() instanceof TieredItem
-                || stack.isDamageableItem();
+        boolean isBase = stack.getItem() instanceof ArmorItem || stack.getItem() instanceof TieredItem || stack.isDamageableItem();
 
         if (slot == 0) return isTemplate;
         if (slot == 1) return isBase && !isTemplate;
-
-        // Slot 2: Catch-all for Ingredients.
-        // We removed the strict recipe check because it was blocking valid ores.
-        // Now it accepts anything that ISN'T a Template and ISN'T Armor.
         if (slot == 2) return !isTemplate && !isBase;
-
         return false;
     }
 
     @Override
     public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
-        behaviours.add(new DirectBeltInputBehaviour(this)
-                .allowingBeltFunnels()
-                .setInsertionHandler(this::handleBeltInput));
+        behaviours.add(new DirectBeltInputBehaviour(this).allowingBeltFunnels().setInsertionHandler(this::handleBeltInput));
     }
 
     private ItemStack handleBeltInput(TransportedItemStack transported, Direction side, boolean simulate) {
@@ -136,13 +96,13 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements Si
     @Override
     public void tick() {
         super.tick();
+        // Removed Auto-Eject Logic. Extraction relies on Funnels/Belts now.
     }
 
-    public InteractionResult onUse(Player player, InteractionHand hand) {
+    public InteractionResult onUse(Player player, InteractionHand hand, Direction side) {
         if (level == null || level.isClientSide) return InteractionResult.PASS;
         ItemStack held = player.getItemInHand(hand);
 
-        // 1. Manual Insert (Inputs 0-2)
         if (!held.isEmpty()) {
             for (int i = 0; i < 3; i++) {
                 if (inventory[i].isResourceBlank() && isValidForSlot(i, held)) {
@@ -153,9 +113,8 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements Si
                     return InteractionResult.SUCCESS;
                 }
             }
-        }
-        // 2. Manual Take (From Output 3 first, then Inputs)
-        else {
+        } else {
+            // TAKE Output First
             if (!inventory[3].isResourceBlank()) {
                 player.setItemInHand(hand, inventory[3].variant.toStack());
                 inventory[3].variant = ItemVariant.blank();
@@ -163,6 +122,7 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements Si
                 notifyUpdate();
                 return InteractionResult.SUCCESS;
             }
+            // Then Inputs
             for (int i = 2; i >= 0; i--) {
                 if (!inventory[i].isResourceBlank()) {
                     player.setItemInHand(hand, inventory[i].variant.toStack());
@@ -178,8 +138,7 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements Si
 
     public void attemptCraft() {
         if (level == null) return;
-
-        if (!inventory[3].isResourceBlank()) return;
+        if (!inventory[3].isResourceBlank()) return; // Can't craft if output full
 
         SimpleContainer tempInv = new SimpleContainer(3);
         for (int i = 0; i < 3; i++) {
@@ -192,12 +151,13 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements Si
         if (match.isPresent()) {
             ItemStack result = match.get().assemble(tempInv, level.registryAccess());
 
+            // Consume Inputs
             for (int i = 0; i < 3; i++) {
                 inventory[i].amount = 0;
                 inventory[i].variant = ItemVariant.blank();
             }
 
-            // Output to Slot 3
+            // Set Output
             inventory[3].variant = ItemVariant.of(result);
             inventory[3].amount = 1;
 
@@ -206,12 +166,16 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements Si
         }
     }
 
+    // Helper for Mixin
     public int getFilledSlots() {
         int count = 0;
-        for (int i = 0; i < 3; i++) {
-            if(!inventory[i].isResourceBlank()) count++;
-        }
+        for (int i = 0; i < 3; i++) { if(!inventory[i].isResourceBlank()) count++; }
         return count;
+    }
+
+    // Helper for Mixin
+    public boolean isOutputEmpty() {
+        return inventory[3].isResourceBlank();
     }
 
     @Override

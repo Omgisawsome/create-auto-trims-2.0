@@ -29,7 +29,7 @@ public class AutoSmithingTableRenderer extends SmartBlockEntityRenderer<AutoSmit
                 {0.5f, 0.5f}    // Slot 3: Center (Output)
         };
 
-        // Force full brightness so items aren't dark
+        // Full Brightness (15 Sky, 15 Block)
         int brightLight = LightTexture.pack(15, 15);
 
         for (int i = 0; i < 4; i++) {
@@ -38,17 +38,15 @@ public class AutoSmithingTableRenderer extends SmartBlockEntityRenderer<AutoSmit
             ItemStack stack = be.inventory[i].variant.toStack();
             ms.pushPose();
 
-            // Lowered back to normal height (slightly above table at 1.02)
+            // Slightly above table
             double yOffset = 1.02;
-
-            // Output item sits slightly higher
-            if (i == 3) yOffset = 1.05;
+            if (i == 3) yOffset = 1.05; // Output sits on top of inputs visually
 
             ms.translate(offsets[i][0], yOffset, offsets[i][1]);
-            ms.mulPose(Axis.XP.rotationDegrees(90));
+            ms.mulPose(Axis.XP.rotationDegrees(90)); // Lie flat
 
             float scale = 0.35f;
-            if (i == 3) scale = 0.45f;
+            if (i == 3) scale = 0.45f; // Output is bigger
             ms.scale(scale, scale, scale);
 
             mc.getItemRenderer().renderStatic(stack, ItemDisplayContext.FIXED, brightLight, overlay, ms, buffer, be.getLevel(), 0);
