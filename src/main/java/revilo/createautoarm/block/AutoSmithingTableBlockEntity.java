@@ -7,6 +7,7 @@ import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour
 import net.fabricmc.fabric.api.transfer.v1.item.ItemVariant;
 import net.fabricmc.fabric.api.transfer.v1.storage.Storage;
 import net.fabricmc.fabric.api.transfer.v1.storage.base.CombinedStorage;
+import net.fabricmc.fabric.api.transfer.v1.storage.base.SidedStorageBlockEntity;
 import net.fabricmc.fabric.api.transfer.v1.storage.base.SingleVariantStorage;
 import net.fabricmc.fabric.api.transfer.v1.transaction.Transaction;
 import net.minecraft.core.BlockPos;
@@ -23,22 +24,26 @@ import net.minecraft.world.item.TieredItem;
 import net.minecraft.world.item.crafting.RecipeType;
 import net.minecraft.world.item.crafting.SmithingRecipe;
 import net.minecraft.world.level.block.state.BlockState;
+import org.jetbrains.annotations.Nullable;
 import revilo.createautoarm.CreateAutoArmour;
 
 import java.util.List;
 import java.util.Optional;
 
 @SuppressWarnings({"rawtypes", "unchecked", "UnstableApiUsage"})
-public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
+public class AutoSmithingTableBlockEntity extends SmartBlockEntity implements SidedStorageBlockEntity {
 
-    // Slot 0: Template, Slot 1: Base (Tool/Armor), Slot 2: Addition (Ingot/Gem)
-    public final SingleVariantStorage<ItemVariant>[] inventory = new SingleVariantStorage[3];
+    // Slot 0: Template
+    // Slot 1: Base (Tool/Armor)
+    // Slot 2: Addition (Ingot/Gem)
+    // Slot 3: OUTPUT (Finished Item)
+    public final SingleVariantStorage<ItemVariant>[] inventory = new SingleVariantStorage[4];
     private final Storage<ItemVariant> exposedStorage;
 
     public AutoSmithingTableBlockEntity(BlockPos pos, BlockState state) {
         super(CreateAutoArmour.SMITHING_TABLE_BE, pos, state);
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             int finalI = i;
             inventory[i] = new SingleVariantStorage<>() {
                 @Override
@@ -53,8 +58,15 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
 
                 @Override
                 protected boolean canInsert(ItemVariant variant) {
-                    // Automation Filter
+                    // Only allow insertion into Input Slots (0, 1, 2)
+                    if (finalI == 3) return false;
                     return isValidForSlot(finalI, variant.toStack());
+                }
+
+                @Override
+                protected boolean canExtract(ItemVariant variant) {
+                    // Only allow extraction from Output Slot (3)
+                    return finalI == 3;
                 }
 
                 @Override
@@ -64,7 +76,12 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
                 }
             };
         }
-        this.exposedStorage = new CombinedStorage<>(List.of(inventory[0], inventory[1], inventory[2]));
+        this.exposedStorage = new CombinedStorage<>(List.of(inventory[0], inventory[1], inventory[2], inventory[3]));
+    }
+
+    @Override
+    public @Nullable Storage<ItemVariant> getItemStorage(Direction side) {
+        return exposedStorage;
     }
 
     public Storage<ItemVariant> getStorage() {
@@ -72,10 +89,15 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
     }
 
     /**
-     * EXCLUSIVE FILTER:
-     * Ensures items only go into ONE specific slot type.
+     * ROBUST FILTER:
+     * Slot 0: Templates
+     * Slot 1: Armor/Tools
+     * Slot 2: Everything Else (Ensures Modded Ores/Ingots work)
+     * Slot 3: Output Only (No insert)
      */
     private boolean isValidForSlot(int slot, ItemStack stack) {
+        if (slot == 3) return false; // Output only
+
         boolean isTemplate = stack.getItem() instanceof SmithingTemplateItem;
         boolean isBase = stack.getItem() instanceof ArmorItem
                 || stack.getItem() instanceof TieredItem
@@ -83,6 +105,10 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
 
         if (slot == 0) return isTemplate;
         if (slot == 1) return isBase && !isTemplate;
+
+        // Slot 2: Catch-all for Ingredients.
+        // We removed the strict recipe check because it was blocking valid ores.
+        // Now it accepts anything that ISN'T a Template and ISN'T Armor.
         if (slot == 2) return !isTemplate && !isBase;
 
         return false;
@@ -90,30 +116,17 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
 
     @Override
     public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
-        // Add Direct Belt Input (Like a Depot)
         behaviours.add(new DirectBeltInputBehaviour(this)
                 .allowingBeltFunnels()
                 .setInsertionHandler(this::handleBeltInput));
     }
 
-    // Handler for DirectBeltInputBehaviour
     private ItemStack handleBeltInput(TransportedItemStack transported, Direction side, boolean simulate) {
         ItemStack stack = transported.stack;
-
-        // Use a transaction to safely try inserting into our storage
         try (Transaction t = Transaction.openOuter()) {
             long inserted = exposedStorage.insert(ItemVariant.of(stack), stack.getCount(), t);
-
-            // If we are not simulating, commit the changes (actually take the item)
-            if (!simulate) {
-                t.commit();
-            }
-
-            // Calculate remainder to leave on the belt
-            if (inserted == stack.getCount()) {
-                return ItemStack.EMPTY;
-            }
-
+            if (!simulate) t.commit();
+            if (inserted == stack.getCount()) return ItemStack.EMPTY;
             ItemStack remainder = stack.copy();
             remainder.shrink((int) inserted);
             return remainder;
@@ -129,7 +142,7 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
         if (level == null || level.isClientSide) return InteractionResult.PASS;
         ItemStack held = player.getItemInHand(hand);
 
-        // 1. Try to INSERT (Smart Sort)
+        // 1. Manual Insert (Inputs 0-2)
         if (!held.isEmpty()) {
             for (int i = 0; i < 3; i++) {
                 if (inventory[i].isResourceBlank() && isValidForSlot(i, held)) {
@@ -141,8 +154,15 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
                 }
             }
         }
-        // 2. Try to TAKE item (LIFO)
+        // 2. Manual Take (From Output 3 first, then Inputs)
         else {
+            if (!inventory[3].isResourceBlank()) {
+                player.setItemInHand(hand, inventory[3].variant.toStack());
+                inventory[3].variant = ItemVariant.blank();
+                inventory[3].amount = 0;
+                notifyUpdate();
+                return InteractionResult.SUCCESS;
+            }
             for (int i = 2; i >= 0; i--) {
                 if (!inventory[i].isResourceBlank()) {
                     player.setItemInHand(hand, inventory[i].variant.toStack());
@@ -159,6 +179,8 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
     public void attemptCraft() {
         if (level == null) return;
 
+        if (!inventory[3].isResourceBlank()) return;
+
         SimpleContainer tempInv = new SimpleContainer(3);
         for (int i = 0; i < 3; i++) {
             if (inventory[i].isResourceBlank()) return;
@@ -170,13 +192,14 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
         if (match.isPresent()) {
             ItemStack result = match.get().assemble(tempInv, level.registryAccess());
 
-            for (SingleVariantStorage<ItemVariant> slot : inventory) {
-                slot.amount = 0;
-                slot.variant = ItemVariant.blank();
+            for (int i = 0; i < 3; i++) {
+                inventory[i].amount = 0;
+                inventory[i].variant = ItemVariant.blank();
             }
 
-            inventory[1].variant = ItemVariant.of(result);
-            inventory[1].amount = 1;
+            // Output to Slot 3
+            inventory[3].variant = ItemVariant.of(result);
+            inventory[3].amount = 1;
 
             notifyUpdate();
             level.levelEvent(1044, worldPosition, 0);
@@ -185,8 +208,8 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
 
     public int getFilledSlots() {
         int count = 0;
-        for(SingleVariantStorage<ItemVariant> slot : inventory) {
-            if(!slot.isResourceBlank()) count++;
+        for (int i = 0; i < 3; i++) {
+            if(!inventory[i].isResourceBlank()) count++;
         }
         return count;
     }
@@ -194,7 +217,7 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
     @Override
     protected void write(CompoundTag compound, boolean clientPacket) {
         super.write(compound, clientPacket);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             CompoundTag tag = new CompoundTag();
             tag.put("variant", inventory[i].variant.toNbt());
             tag.putLong("amount", inventory[i].amount);
@@ -205,7 +228,7 @@ public class AutoSmithingTableBlockEntity extends SmartBlockEntity {
     @Override
     protected void read(CompoundTag compound, boolean clientPacket) {
         super.read(compound, clientPacket);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             if (compound.contains("Slot" + i)) {
                 CompoundTag tag = compound.getCompound("Slot" + i);
                 if (tag.contains("variant")) {
